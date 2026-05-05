@@ -1,7 +1,3 @@
 module secure-app
 
-go 1.21
-
-require (
-	github.com/gin-gonic/gin v1.10.0
-)
+go 1.24

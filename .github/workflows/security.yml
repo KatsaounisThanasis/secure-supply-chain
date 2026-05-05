@@ -9,81 +9,87 @@ on:
 
 jobs:
   build-and-scan:
-    name: Build, Scan and SBOM
+    name: Build, Scan, SBOM and Sign
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      id-token: write
-      packages: write
+      id-token: write   # required for Cosign keyless signing
+      packages: write   # required for GHCR push
+
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
-      - name: Set lower case owner name
+      - name: Set lower case image ref
         run: |
-          echo "IMAGE_REF=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/secure-app:${GITHUB_SHA}" >> ${GITHUB_ENV}
+          echo "IMAGE_REF=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/secure-app:${GITHUB_SHA}" >> "${GITHUB_ENV}"
 
-      - name: Log in to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build Docker Image
+      # 1) BUILD locally first (do not push yet -- we want to scan before publishing)
+      - name: Build Docker image (local)
         run: |
           docker build -t "${IMAGE_REF}" ./app
 
-      - name: Push Docker Image
-        run: |
-          docker push "${IMAGE_REF}"
-
+      # 2) SCAN: single Trivy invocation, JSON output. We parse it for table/enforcement
+      #    locally (no need to call the action 3x with 3 DB downloads).
       - name: Run Trivy scan (JSON report)
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: '${{ env.IMAGE_REF }}'
           format: 'json'
           output: 'trivy-results.json'
-          exit-code: '0'
+          exit-code: '0'           # never fail here -- always upload the report
           ignore-unfixed: true
           vuln-type: 'os,library'
           severity: 'CRITICAL,HIGH'
 
-      - name: Upload Trivy scan results
+      - name: Upload Trivy report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
         with:
           name: trivy-results
           path: trivy-results.json
 
-      - name: Run Trivy vulnerability scanner (enforcement)
-        uses: aquasecurity/trivy-action@master
-        with:
-          image-ref: '${{ env.IMAGE_REF }}'
-          format: 'table'
-          exit-code: '1' # Θα κάνει fail το build αν βρει vulnerabilities
-          ignore-unfixed: true
-          vuln-type: 'os,library'
-          severity: 'CRITICAL,HIGH'
-
       - name: Generate SBOM (CycloneDX)
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: '${{ env.IMAGE_REF }}'
           format: 'cyclonedx'
           output: 'sbom.json'
 
-      - name: Install Cosign
-        uses: sigstore/cosign-installer@v3
-
-      - name: Sign image with Cosign (keyless)
-        env:
-          COSIGN_EXPERIMENTAL: "true"
-        run: |
-          cosign sign --yes "${IMAGE_REF}"
-
       - name: Upload SBOM
-        uses: actions/upload-artifact@v4
+        if: always()
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
         with:
           name: sbom
           path: sbom.json
+
+      # 3) ENFORCE policy. If this fails, we stop -- nothing gets pushed/signed.
+      - name: Enforce CRITICAL/HIGH gate
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: '${{ env.IMAGE_REF }}'
+          format: 'table'
+          exit-code: '1'
+          ignore-unfixed: true
+          vuln-type: 'os,library'
+          severity: 'CRITICAL,HIGH'
+
+      # 4) Only PUSH after the scan passed
+      - name: Log in to GHCR
+        uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567 # v3.3.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push Docker image
+        run: |
+          docker push "${IMAGE_REF}"
+
+      # 5) SIGN the pushed image (keyless via Sigstore + GitHub OIDC)
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@cad07c2e89fa2edd6e2d7bab4c1aa38e53f76003 # v4.1.1
+
+      - name: Sign image with Cosign (keyless)
+        run: |
+          cosign sign --yes "${IMAGE_REF}"
