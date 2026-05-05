@@ -15,11 +15,13 @@ jobs:
       contents: read
       id-token: write
       packages: write
-    env:
-      IMAGE_REF: ghcr.io/${{ github.repository_owner }}/secure-app:${{ github.sha }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Set lower case owner name
+        run: |
+          echo "IMAGE_REF=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/secure-app:${GITHUB_SHA}" >> ${GITHUB_ENV}
 
       - name: Log in to GHCR
         uses: docker/login-action@v3
