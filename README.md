@@ -4,7 +4,7 @@ This project demonstrates a production-oriented DevSecOps pipeline focused on se
 
 ## Status
 
-![GitHub Actions workflow status](https://img.shields.io/github/actions/workflow/status/KatsaounisThanasis/secure-supply-chain/security.yml?branch=main&label=Security%20Pipeline)
+![Security Pipeline](https://github.com/KatsaounisThanasis/secure-supply-chain/actions/workflows/security.yml/badge.svg)
 ![License](https://img.shields.io/badge/License-MIT-blue.svg)
 
 ## Architecture Overview
