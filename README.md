@@ -191,7 +191,7 @@ make kyverno-demo
 
 ## Author
 
-Built by Thanasis Katsaounis as a portfolio demonstration. Find me on [GitHub](https://github.com/KatsaounisThanasis).
+Built by Thanasis Katsaounis . Find me on [GitHub](https://github.com/KatsaounisThanasis).
 
 ## License
 
