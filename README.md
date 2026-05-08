@@ -1,138 +1,198 @@
-# Secure Software Supply Chain
+<div align="center">
+  <h1>Secure Software Supply Chain 🛡️</h1>
+  <p><i>A hardened, end-to-end CI/CD pipeline demonstrating zero-trust artifact integrity from commit to runtime.</i></p>
 
-This project demonstrates a production-oriented DevSecOps pipeline focused on securing the software supply chain from source code to container registry. It integrates automated vulnerability scanning, Software Bill of Materials (SBOM) generation, policy enforcement, and keyless image signing to build trust and integrity into software artifacts, protecting against modern supply chain attacks.
+  <p>
+    <img src="https://img.shields.io/github/actions/workflow/status/KatsaounisThanasis/secure-supply-chain/security.yml?style=flat-square" alt="Build Status">
+    <img src="https://img.shields.io/github/license/KatsaounisThanasis/secure-supply-chain?style=flat-square" alt="License">
+    <img src="https://img.shields.io/badge/Go-1.21+-00ADD8?style=flat-square&logo=go" alt="Go Version">
+  </p>
+  <p>
+    <img src="https://img.shields.io/badge/Cosign-Signed-1D70B8?style=for-the-badge&logo=sigstore" alt="Cosign Signed">
+    <img src="https://img.shields.io/badge/SBOM-CycloneDX-005B9C?style=for-the-badge" alt="SBOM CycloneDX">
+    <img src="https://img.shields.io/badge/Trivy-Scanned-F26E21?style=for-the-badge" alt="Trivy Scanned">
+    <img src="https://img.shields.io/badge/SLSA-Level_2-6F3381?style=for-the-badge" alt="SLSA L2">
+  </p>
+  <p>
+    <img src="https://img.shields.io/badge/Docker-2496ED?style=flat-square&logo=docker&logoColor=white" alt="Docker">
+    <img src="https://img.shields.io/badge/GitHub_Actions-2088FF?style=flat-square&logo=github-actions&logoColor=white" alt="GitHub Actions">
+    <img src="https://img.shields.io/badge/Sigstore-1D70B8?style=flat-square&logo=sigstore&logoColor=white" alt="Sigstore">
+    <img src="https://img.shields.io/badge/Kyverno-0052CC?style=flat-square&logo=kubernetes&logoColor=white" alt="Kyverno">
+  </p>
+</div>
 
-## Status
+This repository serves as a portfolio demonstration of a production-grade secure software supply chain. It provides automated defense-in-depth against dependency vulnerabilities, secret leakage, and build-time tampering, culminating in cryptographic verification via Kubernetes admission control to ensure only verified, trusted artifacts run in your cluster.
 
-![Security Pipeline](https://github.com/KatsaounisThanasis/secure-supply-chain/actions/workflows/security.yml/badge.svg)
-![License](https://img.shields.io/badge/License-MIT-blue.svg)
+<details>
+<summary>Table of Contents</summary>
 
-## Architecture Overview
+- [Architecture](#architecture)
+- [What This Demonstrates](#what-this-demonstrates)
+- [Pipeline at a Glance](#pipeline-at-a-glance)
+- [Quickstart](#quickstart)
+  - [Verify a Signed Image (No Setup)](#verify-a-signed-image-no-setup)
+  - [Run the Local Scan](#run-the-local-scan)
+  - [Demo Runtime Enforcement (Kyverno on kind)](#demo-runtime-enforcement-kyverno-on-kind)
+- [Threat Model](#threat-model)
+- [Tech Stack](#tech-stack)
+- [Repository Layout](#repository-layout)
+- [Roadmap / Future Work](#roadmap--future-work)
+- [Author](#author)
+- [License](#license)
 
-A visual representation of the secure CI/CD pipeline, detailing each stage from code commit to artifact verification.
+</details>
+
+## Architecture
 
 ```mermaid
 graph TD
-    A[Code Commit] --> B(GitHub Actions Workflow)
-    B --> L(Lint: hadolint + gitleaks)
-    L --> C(Build Docker Image - local);
-    C --> D(Trivy Scan - JSON Report);
-    D --> D2(Trivy SARIF -> GitHub Security tab);
-    D2 --> E(Generate SBOM - CycloneDX);
-    E --> F{Enforcement Gate: HIGH/CRITICAL?};
-    F -- NO --> G(Push Image to GHCR);
-    F -- YES --> H(Fail Build - nothing pushed);
-    G --> I(Cosign Keyless Sign);
-    I --> I2(Cosign Attest SBOM - in-toto);
-    I2 --> J(Signed image + SBOM attestation);
-    J --> K(Verify locally with cosign verify-attestation);
+    classDef lint fill:#1E88E5,stroke:#fff,stroke-width:2px,color:#fff;
+    classDef scan fill:#F4511E,stroke:#fff,stroke-width:2px,color:#fff;
+    classDef gate fill:#E53935,stroke:#fff,stroke-width:2px,color:#fff;
+    classDef sign fill:#43A047,stroke:#fff,stroke-width:2px,color:#fff;
+    classDef runtime fill:#8E24AA,stroke:#fff,stroke-width:2px,color:#fff;
+
+    A[Code Commit] --> B[Lint: Hadolint & Gitleaks]:::lint
+    B --> C[Build Image Locally]
+    C --> D[Trivy Vulnerability Scan]:::scan
+    D -. SARIF Output .-> E[GitHub Security Tab]
+    D --> H[Generate CycloneDX SBOM]
+    H --> F{Enforcement Gate}:::gate
+    F -- HIGH/CRITICAL CVEs --> G[Fail Pipeline]:::gate
+    F -- Pass --> I[Push to GHCR]
+    I --> J[Keyless Sign via Cosign & OIDC]:::sign
+    J --> K[Attest SBOM via Cosign]:::sign
+    K -. Transparency Log .-> L[(Rekor)]
+    K --> M[Image + Signed SBOM]
+    M --> N[Kubernetes Cluster]
+    N --> O{Kyverno Admission Control}:::runtime
+    O -- Signature Verified --> P[Pod Admitted]:::runtime
+    O -- Unsigned/Invalid --> Q[Pod Rejected]:::runtime
 ```
 
 ## What This Demonstrates
 
-This repository showcases practical application of several critical DevSecOps and supply chain security concepts:
-
-*   **Automated Vulnerability Scanning:** Proactive identification of software vulnerabilities using Trivy.
-*   **Software Bill of Materials (SBOM):** Generation and management of CycloneDX-formatted SBOMs for enhanced transparency and risk management.
-*   **Policy-as-Code Enforcement:** Implementing gates in the CI/CD pipeline to prevent the deployment of insecure artifacts.
-*   **Keyless Container Image Signing:** Leveraging Sigstore and Cosign with GitHub OIDC for secure, auditable, and ephemeral image attestations.
-*   **Supply Chain Levels for Software Artifacts (SLSA):** Adherence to foundational SLSA principles to improve software supply chain integrity.
-*   **Defense-in-Depth:** Layering security controls throughout the CI/CD process to create robust protections.
-*   **Secure Containerization:** Building minimal, non-root Docker images for Go applications.
+* **DevSecOps Automation:** Seamlessly integrating security into the development lifecycle without hindering deployment velocity.
+* **Cryptographic Provenance:** Leveraging Sigstore's keyless signing (Fulcio) and transparency logs (Rekor) to bind CI identities to artifacts.
+* **Software Bill of Materials (SBOM):** Generating and cryptographically attaching CycloneDX SBOMs via in-toto attestations.
+* **Zero-Trust Runtime:** Enforcing artifact integrity at deployment time using Kubernetes admission controllers (Kyverno).
+* **Shift-Left Security:** Catching exposed secrets and vulnerable dependencies before they ever reach the container registry or cluster.
 
 ## Pipeline at a Glance
 
-Each stage in the CI/CD pipeline serves a specific security purpose:
+1. **Code Linting (Hadolint, Gitleaks):** Analyzes Dockerfiles and repository history. *Prevents credential exposure and poor container configurations.*
+2. **Local Image Build:** Compiles the application into an OCI-compliant container image. *Creates the artifact locally in an ephemeral CI environment.*
+3. **Vulnerability Scanning (Trivy, JSON + SARIF):** Scans the local image for OS and application dependency CVEs. JSON goes to artifacts; SARIF feeds the GitHub Security tab. *Identifies known vulnerabilities before publication.*
+4. **SBOM Generation (CycloneDX):** Creates a machine-readable inventory of all components. *Generated before the gate, so triage data exists even on failed builds.*
+5. **Enforcement Gate:** Re-runs Trivy with `exit-code: 1` on HIGH/CRITICAL findings. *Halts the pipeline; nothing is pushed to GHCR.*
+6. **Registry Push (GHCR):** Uploads the vetted image to the GitHub Container Registry. *Distributes only artifacts that passed the gate.*
+7. **Keyless Signing (Cosign):** Signs the image using GitHub OIDC and Sigstore infrastructure. *Provides irrefutable proof of origin and prevents tampering.*
+8. **Attestation (Cosign):** Attaches the SBOM to the image as an OCI referrer. *Cryptographically binds the component inventory to the specific image digest.*
 
-1.  **Build Docker Image (local):** The application is containerized into a Docker image, prepared for scanning and deployment.
-    *   **Rationale:** Ensures consistent build environment and reproducible artifacts.
-2.  **Trivy Scan (JSON Report):** The locally built image is scanned for vulnerabilities, and a detailed JSON report is generated.
-    *   **Rationale:** Identifies security flaws early in the pipeline, preventing vulnerable images from reaching the registry. This scan does not fail the build but provides data for the enforcement gate.
-3.  **Generate SBOM (CycloneDX):** A comprehensive Software Bill of Materials is created for the image.
-    *   **Rationale:** Provides an immutable manifest of all components and dependencies, crucial for compliance, risk assessment, and rapid response to new CVEs.
-4.  **Enforcement Gate (HIGH/CRITICAL Vulnerabilities):** The pipeline explicitly fails if Trivy detects HIGH or CRITICAL severity vulnerabilities.
-    *   **Rationale:** Prevents the promotion of severely vulnerable images to the container registry, enforcing a 'shift-left' security posture.
-5.  **Push Image to GHCR:** The scanned and approved image is pushed to GitHub Container Registry.
-    *   **Rationale:** Utilizes a secure, versioned, and OCI-compliant registry for artifact storage. This only occurs *after* security checks pass.
-6.  **Cosign Keyless Sign:** The pushed image is digitally signed using Cosign and Sigstore's keyless approach with GitHub OIDC.
-    *   **Rationale:** Establishes cryptographic proof of the image's origin and integrity, allowing consumers to verify that the image has not been tampered with and originates from this specific CI/CD workflow.
+## Quickstart
 
-## Verify It Yourself
+### Verify a Signed Image (No Setup)
 
-To independently verify the security posture of an image pushed by this pipeline:
+You can verify the cryptographic signature and SBOM attestation of our built images using Cosign (v2.0+). Replace `<SHA>` with a specific commit or image digest.
 
-> Replace `<SHA>` below with a commit SHA from a successful workflow run on `main`.
-> See the [GHCR package page](https://github.com/KatsaounisThanasis/secure-supply-chain/pkgs/container/secure-app) for available tags.
+**Verify the Image Signature:**
+```bash
+cosign verify \
+  --certificate-identity-regexp="https://github.com/KatsaounisThanasis/secure-supply-chain/.github/workflows/security.yml@refs/heads/main" \
+  --certificate-oidc-issuer="https://token.actions.githubusercontent.com" \
+  ghcr.io/katsaounisthanasis/secure-app:<SHA>
+```
 
-1. **Install Cosign v2:**
-    ```bash
-    go install github.com/sigstore/cosign/v2/cmd/cosign@latest
-    # or download a release binary from https://github.com/sigstore/cosign/releases
-    ```
+**Verify the SBOM Attestation:**
+```bash
+cosign verify-attestation --type cyclonedx \
+  --certificate-identity-regexp="https://github.com/KatsaounisThanasis/secure-supply-chain/.github/workflows/security.yml@refs/heads/main" \
+  --certificate-oidc-issuer="https://token.actions.githubusercontent.com" \
+  ghcr.io/katsaounisthanasis/secure-app:<SHA>
+```
 
-2. **Pull the image:**
-    ```bash
-    docker pull ghcr.io/katsaounisthanasis/secure-app:<SHA>
-    ```
+### Run the Local Scan
 
-3. **Verify the Cosign keyless signature:**
-    ```bash
-    cosign verify \
-      --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-      --certificate-identity-regexp '^https://github.com/KatsaounisThanasis/secure-supply-chain/\.github/workflows/security\.yml@refs/heads/main$' \
-      ghcr.io/katsaounisthanasis/secure-app:<SHA>
-    ```
-    A successful verification prints the certificate subject and Rekor transparency-log entry URL.
-
-4. **Verify and inspect the SBOM attestation:**
-    ```bash
-    cosign verify-attestation \
-      --type cyclonedx \
-      --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-      --certificate-identity-regexp '^https://github.com/KatsaounisThanasis/secure-supply-chain/\.github/workflows/security\.yml@refs/heads/main$' \
-      ghcr.io/katsaounisthanasis/secure-app:<SHA> \
-      | jq -r '.payload' | base64 -d | jq '.predicate'
-    ```
-    This validates that the in-toto attestation was produced by this exact workflow and prints the embedded CycloneDX SBOM.
-
-## Threat Model
-
-| Threat                          | Mitigation                                                       | Where in the Pipeline   |
-| :------------------------------ | :--------------------------------------------------------------- | :---------------------- |
-| **Dependency CVEs**             | Trivy scan + HIGH/CRITICAL enforcement gate                      | Scan, Gate              |
-| **Vulnerable base image**       | Trivy scan, version-pinned base image (digest-pin is future work)| Build, Scan             |
-| **Build-time tampering**        | SHA-pinned actions, ephemeral OIDC tokens, hosted runners        | All stages              |
-| **Secret leakage in source**    | gitleaks scan in lint job (gates the build)                      | Lint                    |
-| **Dockerfile anti-patterns**    | hadolint                                                         | Lint                    |
-| **Registry compromise / swap**  | Cosign keyless signature + Rekor transparency log                | Sign, Verify            |
-| **Identity spoofing**           | `certificate-identity-regexp` pinned to this repo's workflow      | Verify                  |
-| **Unsigned image at runtime**   | Kyverno `verifyImages` ClusterPolicy (Phase 5 — runtime)          | Runtime (K8s admission) |
-
-## Tech Stack
-
-| Category                  | Tool / Language      | Purpose                                       |
-| :------------------------ | :------------------- | :-------------------------------------------- |
-| **Application Language**  | Go                   | Core web service implementation               |
-| **Containerization**      | Docker               | Image packaging and isolation                 |
-| **CI/CD Platform**        | GitHub Actions       | Workflow automation and orchestration         |
-| **Vulnerability Scanning**| Trivy (Aqua Security)| Image scanning, SBOM generation, policy engine|
-| **Container Registry**    | GitHub Container Registry (GHCR) | Secure OCI artifact hosting           |
-| **Image Signing**         | Cosign (Sigstore)    | Keyless digital signatures for artifacts      |
-| **SBOM Standard**         | CycloneDX            | Software Bill of Materials format             |
-
-## Local Development
-
-The `scripts/scan.sh` script provides a local equivalent of the CI pipeline's scanning and SBOM generation steps:
-
+To validate the code locally against leaks and misconfigurations:
 ```bash
 ./scripts/scan.sh
 ```
 
-This script will:
-1.  Build the Docker image locally.
-2.  Run a Trivy vulnerability scan (HIGH, CRITICAL severity).
-3.  Generate a CycloneDX SBOM (`sbom-local.json`).
+### Demo Runtime Enforcement (Kyverno on kind)
+
+This repository includes a full local demonstration of Kubernetes admission control preventing unsigned images from being deployed.
+
+```bash
+make kyverno-demo
+```
+*Note: This command spins up a local `kind` cluster, installs the Kyverno admission controller, applies our `verifyImages` ClusterPolicy (from `k8s/kyverno-policy.yaml`), and then attempts to deploy a signed pod (`k8s/demos/pass-signed.yaml`) which succeeds, followed by an unsigned pod (`k8s/demos/fail-unsigned.yaml`) which is rejected.*
+
+## Threat Model
+
+| Threat | Mitigation | Stage | Type |
+| :--- | :--- | :--- | :--- |
+| **Dependency CVEs** | Trivy Scan + Enforcement Gate | Scan/Gate | Detective/Preventive |
+| **Vulnerable Base Image** | Pinned base image + Trivy Scan | Build/Scan | Preventive |
+| **Build-time Tampering** | SHA-pinned Actions, Ephemeral OIDC | All | Preventive |
+| **Secret Leakage** | Gitleaks pre-build scan | Lint | Detective/Preventive |
+| **Dockerfile Anti-patterns** | Hadolint | Lint | Detective |
+| **Registry Compromise / Image Swap** | Cosign Keyless Sign + Rekor Transparency | Sign/Verify | Cryptographic |
+| **Identity Spoofing** | Identity Regexp (Issuer/Subject) | Verify/Runtime | Cryptographic |
+| **Unsigned Image Execution** | Kyverno Admission Control | Runtime | Preventive |
+
+## Tech Stack
+
+| Category | Tools |
+| :--- | :--- |
+| **Languages** | Go (Application), Bash (Scripts) |
+| **CI/CD** | GitHub Actions, GitHub Container Registry (GHCR) |
+| **Containerization** | Docker, kind (Kubernetes in Docker) |
+| **Security Scanning** | Trivy (CVE/SBOM), Hadolint (Dockerfile), Gitleaks (Secrets) |
+| **Signing & Provenance** | Cosign, Sigstore (Fulcio, Rekor) |
+| **Runtime Security** | Kyverno |
+
+## Repository Layout
+
+```text
+.
+├── .github/
+│   └── workflows/
+│       └── security.yml           # Full CI/CD pipeline definition
+├── app/
+│   ├── Dockerfile                 # Multi-stage optimized Dockerfile
+│   ├── go.mod                     # Go dependencies
+│   ├── main.go                    # Application code
+│   └── main_test.go               # Unit tests
+├── docs/
+│   └── SECURITY_DESIGN.md         # In-depth architectural security documentation
+├── k8s/
+│   ├── demos/
+│   │   ├── fail-unsigned.yaml     # Demo manifest (gets rejected)
+│   │   └── pass-signed.yaml       # Demo manifest (gets admitted)
+│   ├── kyverno-policy.yaml        # Kyverno ClusterPolicy for signature verification
+│   └── namespace.yaml             # Target namespace configuration
+├── scripts/
+│   ├── kind-config.yaml           # Local cluster configuration
+│   ├── scan.sh                    # Local linting and scanning wrapper
+│   ├── verify-image.sh            # Local script to run cosign verifications
+│   └── verify.sh                  # CI verification test script
+├── LICENSE                        # MIT License
+├── Makefile                       # Targets for local builds and the kyverno-demo
+└── README.md                      # This document
+```
+
+## Roadmap / Future Work
+
+* **SLSA Level 3 Provenance:** Integrate `slsa-github-generator` to provide full non-falsifiable build provenance attestations.
+* **Digest-Pinned Base Images:** Transition from tag-pinned (`golang:1.26.2-alpine`, `alpine:3.20`) to digest-pinned (`@sha256:...`) base images for fully immutable builds.
+* **Mutation Policies:** Implement Kyverno policies with `mutateDigest` to resolve image tags to digests automatically upon admission.
+* **Policy Controller Alternative:** Evaluate and configure Sigstore `policy-controller` as an alternative to Kyverno for signature validation.
+* **Observability:** Introduce a Grafana dashboard for historical Trivy SARIF data and cluster policy violations.
+
+## Author
+
+Built by Thanasis Katsaounis as a portfolio demonstration. Find me on [GitHub](https://github.com/KatsaounisThanasis).
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+This project is licensed under the [MIT License](LICENSE).

@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: nginx-unsigned
+  namespace: demo-secure
+  labels:
+    app: nginx-unsigned
+spec:
+  containers:
+    - name: nginx
+      image: docker.io/library/nginx:1.27-alpine
+      imagePullPolicy: Always

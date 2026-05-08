@@ -1,0 +1,46 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: verify-secure-app-images
+spec:
+  background: false
+  validationFailureAction: Enforce
+  failurePolicy: Fail
+  rules:
+    - name: verify-ghcr-secure-app-signatures
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      preconditions:
+        all:
+          - key: "{{ request.namespace }}"
+            operator: AnyNotIn
+            value:
+              - kube-system
+              - kyverno
+      verifyImages:
+        - imageReferences:
+            - ghcr.io/katsaounisthanasis/secure-app/*
+            - ghcr.io/katsaounisthanasis/secure-app:*
+          mutateDigest: true
+          attestors:
+            - entries:
+                - keyless:
+                    issuer: https://token.actions.githubusercontent.com
+                    subject: https://github.com/KatsaounisThanasis/secure-supply-chain/.github/workflows/security.yml@refs/heads/main
+    - name: restrict-demo-namespace-images
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+              namespaces:
+                - demo-secure
+      validate:
+        message: "Only secure-app images are allowed in demo-secure."
+        foreach:
+          - list: "request.object.spec.containers"
+            pattern:
+              image: "ghcr.io/katsaounisthanasis/secure-app*"

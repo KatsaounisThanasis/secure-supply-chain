@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: secure-app-signed
+  namespace: demo-secure
+  labels:
+    app: secure-app
+spec:
+  containers:
+    - name: secure-app
+      image: ghcr.io/katsaounisthanasis/secure-app:__IMAGE_TAG__
+      imagePullPolicy: Always
