@@ -133,19 +133,25 @@ Every claim in this README is **verifiable on the live repository** — nothing 
 
 ### Pipeline run (lint → build/scan/sign → runtime enforcement) all green
 
-[![Full pipeline run](docs/screenshots/02-pipeline-run.png)](https://github.com/KatsaounisThanasis/secure-supply-chain/actions/runs/25562234413)
+<a href="https://github.com/KatsaounisThanasis/secure-supply-chain/actions/runs/25562234413">
+  <img src="docs/screenshots/02-pipeline-run.png" alt="Full pipeline run with three green jobs" width="900">
+</a>
 
 > Three jobs in series. The third — **Runtime Enforcement (Kyverno on kind)** — spins up a real Kubernetes cluster inside the runner, installs Kyverno, deploys a signed pod (admitted), then deploys an unsigned pod (rejected). All asserted automatically.
 
 ### Runtime enforcement job: signed admit + unsigned reject, both proven in CI
 
-[![Runtime enforcement job detail](docs/screenshots/05-runtime-enforcement-job.png)](https://github.com/KatsaounisThanasis/secure-supply-chain/actions/runs/25562234413/job/75036844700)
+<a href="https://github.com/KatsaounisThanasis/secure-supply-chain/actions/runs/25562234413/job/75036844700">
+  <img src="docs/screenshots/05-runtime-enforcement-job.png" alt="Runtime enforcement job — every step green, including signed-admit and unsigned-reject assertions" width="900">
+</a>
 
 > The two key steps are `Deploy SIGNED pod (expect ADMITTED)` and `Deploy UNSIGNED pod (expect REJECTED)` — they fail the build if either expectation isn't met.
 
 ### Signed image on GitHub Container Registry
 
-[![GHCR package](docs/screenshots/03-ghcr-package.png)](https://github.com/KatsaounisThanasis/secure-supply-chain/pkgs/container/secure-app)
+<a href="https://github.com/KatsaounisThanasis/secure-supply-chain/pkgs/container/secure-app">
+  <img src="docs/screenshots/03-ghcr-package.png" alt="GHCR package showing signed image versions and SBOM attestations" width="900">
+</a>
 
 > Each commit produces a tagged image plus `<digest>.sig` and `<digest>.att` artifacts (the Cosign signature and CycloneDX SBOM attestation).
 
