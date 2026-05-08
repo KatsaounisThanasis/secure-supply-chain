@@ -21,7 +21,7 @@
   </p>
 </div>
 
-This repository serves as a portfolio demonstration of a production-grade secure software supply chain. It provides automated defense-in-depth against dependency vulnerabilities, secret leakage, and build-time tampering, culminating in cryptographic verification via Kubernetes admission control to ensure only verified, trusted artifacts run in your cluster.
+This repository is a working reference implementation of a production-grade secure software supply chain. It provides automated defense-in-depth against dependency vulnerabilities, secret leakage, and build-time tampering, culminating in cryptographic verification via Kubernetes admission control to ensure only verified, trusted artifacts run in your cluster. Every stage — from lint to admission — is self-proving on each push.
 
 <details>
 <summary>Table of Contents</summary>
@@ -222,7 +222,7 @@ See [`docs/DEMO_OUTPUT.md`](docs/DEMO_OUTPUT.md) for the full captured terminal 
 
 ## Author
 
-Built by Thanasis Katsaounis . Find me on [GitHub](https://github.com/KatsaounisThanasis).
+Built and maintained by Thanasis Katsaounis. Find me on [GitHub](https://github.com/KatsaounisThanasis).
 
 ## License
 
