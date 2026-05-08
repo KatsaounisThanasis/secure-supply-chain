@@ -1,4 +1,4 @@
-# Secure Software Supply Chain Lab
+# Secure Software Supply Chain
 
 This project demonstrates a production-oriented DevSecOps pipeline focused on securing the software supply chain from source code to container registry. It integrates automated vulnerability scanning, Software Bill of Materials (SBOM) generation, policy enforcement, and keyless image signing to build trust and integrity into software artifacts, protecting against modern supply chain attacks.
 
