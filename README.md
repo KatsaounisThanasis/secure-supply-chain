@@ -14,15 +14,18 @@ A visual representation of the secure CI/CD pipeline, detailing each stage from 
 ```mermaid
 graph TD
     A[Code Commit] --> B(GitHub Actions Workflow)
-    B --> C(Build Docker Image);
+    B --> L(Lint: hadolint + gitleaks)
+    L --> C(Build Docker Image - local);
     C --> D(Trivy Scan - JSON Report);
-    D --> E(Generate SBOM - CycloneDX);
-    E --> F{Enforcement Gate: HIGH/CRITICAL Vulnerabilities?};
+    D --> D2(Trivy SARIF -> GitHub Security tab);
+    D2 --> E(Generate SBOM - CycloneDX);
+    E --> F{Enforcement Gate: HIGH/CRITICAL?};
     F -- NO --> G(Push Image to GHCR);
-    F -- YES --> H(Fail Build);
+    F -- YES --> H(Fail Build - nothing pushed);
     G --> I(Cosign Keyless Sign);
-    I --> J(Image Available for Deployment);
-    J --> K(Verify Image Integrity);
+    I --> I2(Cosign Attest SBOM - in-toto);
+    I2 --> J(Signed image + SBOM attestation);
+    J --> K(Verify locally with cosign verify-attestation);
 ```
 
 ## What This Demonstrates
@@ -58,45 +61,52 @@ Each stage in the CI/CD pipeline serves a specific security purpose:
 
 To independently verify the security posture of an image pushed by this pipeline:
 
-1.  **Install `cosign`:**
-    ```bash
-    go install github.com/sigstore/cosign/cmd/cosign@latest
-    ```
-    *(Ensure `$GOPATH/bin` is in your `$PATH`)*
+> Replace `<SHA>` below with a commit SHA from a successful workflow run on `main`.
+> See the [GHCR package page](https://github.com/KatsaounisThanasis/secure-supply-chain/pkgs/container/secure-app) for available tags.
 
-2.  **Pull the image (example):**
+1. **Install Cosign v2:**
     ```bash
-    docker pull ghcr.io/katsaounisthanasis/secure-app:7f3f595...
-    # Replace '7f3f595...' with an actual commit SHA from a successful workflow run.
+    go install github.com/sigstore/cosign/v2/cmd/cosign@latest
+    # or download a release binary from https://github.com/sigstore/cosign/releases
     ```
 
-3.  **Verify the Cosign signature:**
+2. **Pull the image:**
     ```bash
-    COSIGN_EXPERIMENTAL=1 cosign verify 
-      --certificate-oidc-issuer https://token.actions.githubusercontent.com 
-      --certificate-identity-regexp 'https://github.com/KatsaounisThanasis/secure-supply-chain/.github/workflows/security.yml@refs/heads/main' 
-      ghcr.io/katsaounisthanasis/secure-app:7f3f595...
-    # Replace '7f3f595...' with the same commit SHA used above.
+    docker pull ghcr.io/katsaounisthanasis/secure-app:<SHA>
     ```
-    A successful verification will output details about the signature.
 
-4.  **Inspect the SBOM:**
+3. **Verify the Cosign keyless signature:**
     ```bash
-    cosign download sbom ghcr.io/katsaounisthanasis/secure-app:7f3f595... | jq .
-    # Replace '7f3f595...' with the same commit SHA.
-    # Requires 'jq' for pretty-printing JSON.
+    cosign verify \
+      --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+      --certificate-identity-regexp '^https://github.com/KatsaounisThanasis/secure-supply-chain/\.github/workflows/security\.yml@refs/heads/main$' \
+      ghcr.io/katsaounisthanasis/secure-app:<SHA>
     ```
-    This will display the CycloneDX SBOM, detailing all software components within the image.
+    A successful verification prints the certificate subject and Rekor transparency-log entry URL.
+
+4. **Verify and inspect the SBOM attestation:**
+    ```bash
+    cosign verify-attestation \
+      --type cyclonedx \
+      --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+      --certificate-identity-regexp '^https://github.com/KatsaounisThanasis/secure-supply-chain/\.github/workflows/security\.yml@refs/heads/main$' \
+      ghcr.io/katsaounisthanasis/secure-app:<SHA> \
+      | jq -r '.payload' | base64 -d | jq '.predicate'
+    ```
+    This validates that the in-toto attestation was produced by this exact workflow and prints the embedded CycloneDX SBOM.
 
 ## Threat Model
 
-| Threat                     | Mitigation                        | Where in the Pipeline       |
-| :------------------------- | :-------------------------------- | :-------------------------- |
-| **Dependency CVEs**        | Trivy Scan, Enforcement Gate      | Scan, Enforcement           |
-| **Build-time Tampering**   | OIDC-based Image Signing          | Sign                        |
-| **Registry Compromise**    | Immutable Images, SBOM Artifact   | Push, SBOM Generation       |
-| **Identity Spoofing**      | Cosign Verification (OIDC Issuer) | Sign, Verify                |
-| **Vulnerable Base Image**  | Trivy Scan, Dockerfile Pinning    | Build, Scan                 |
+| Threat                          | Mitigation                                                       | Where in the Pipeline   |
+| :------------------------------ | :--------------------------------------------------------------- | :---------------------- |
+| **Dependency CVEs**             | Trivy scan + HIGH/CRITICAL enforcement gate                      | Scan, Gate              |
+| **Vulnerable base image**       | Trivy scan, version-pinned base image (digest-pin is future work)| Build, Scan             |
+| **Build-time tampering**        | SHA-pinned actions, ephemeral OIDC tokens, hosted runners        | All stages              |
+| **Secret leakage in source**    | gitleaks scan in lint job (gates the build)                      | Lint                    |
+| **Dockerfile anti-patterns**    | hadolint                                                         | Lint                    |
+| **Registry compromise / swap**  | Cosign keyless signature + Rekor transparency log                | Sign, Verify            |
+| **Identity spoofing**           | `certificate-identity-regexp` pinned to this repo's workflow      | Verify                  |
+| **Unsigned image at runtime**   | Kyverno `verifyImages` ClusterPolicy (Phase 5 — runtime)          | Runtime (K8s admission) |
 
 ## Tech Stack
 

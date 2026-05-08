@@ -8,17 +8,41 @@ on:
   workflow_dispatch:
 
 jobs:
+  lint:
+    name: Lint and Secret Scan
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: Lint Dockerfile with Hadolint
+        uses: hadolint/hadolint-action@2332a7b74a6de0dda2e2221d575162eba76ba5e5 # v3.3.0
+        with:
+          dockerfile: app/Dockerfile
+
+      - name: Scan for secrets with Gitleaks
+        uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2.3.9
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   build-and-scan:
     name: Build, Scan, SBOM and Sign
+    needs: lint
     runs-on: ubuntu-latest
     permissions:
       contents: read
       id-token: write   # required for Cosign keyless signing
       packages: write   # required for GHCR push
+      security-events: write
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Set lower case image ref
         run: |
@@ -29,8 +53,7 @@ jobs:
         run: |
           docker build -t "${IMAGE_REF}" ./app
 
-      # 2) SCAN: single Trivy invocation, JSON output. We parse it for table/enforcement
-      #    locally (no need to call the action 3x with 3 DB downloads).
+      # 2) SCAN: JSON report for artifacting + policy gate later.
       - name: Run Trivy scan (JSON report)
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
@@ -44,10 +67,27 @@ jobs:
 
       - name: Upload Trivy report
         if: always()
-        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: trivy-results
           path: trivy-results.json
+
+      - name: Run Trivy scan (SARIF report)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: '${{ env.IMAGE_REF }}'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          exit-code: '0'
+          ignore-unfixed: true
+          vuln-type: 'os,library'
+          severity: 'CRITICAL,HIGH'
+
+      - name: Upload Trivy SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@68bde559dea0fdcac2102bfdf6230c5f70eb485e # v4.35.4
+        with:
+          sarif_file: trivy-results.sarif
 
       - name: Generate SBOM (CycloneDX)
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
@@ -58,7 +98,7 @@ jobs:
 
       - name: Upload SBOM
         if: always()
-        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: sbom
           path: sbom.json
@@ -76,7 +116,7 @@ jobs:
 
       # 4) Only PUSH after the scan passed
       - name: Log in to GHCR
-        uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567 # v3.3.0
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -93,3 +133,7 @@ jobs:
       - name: Sign image with Cosign (keyless)
         run: |
           cosign sign --yes "${IMAGE_REF}"
+
+      - name: Attest SBOM with Cosign
+        run: |
+          cosign attest --yes --predicate sbom.json --type cyclonedx "${IMAGE_REF}"

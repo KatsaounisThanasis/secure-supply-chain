@@ -1,21 +1,37 @@
-#!/bin/bash
+#!/usr/bin/env bash
+set -euo pipefail
 
-# Έλεγχος αν το Trivy είναι εγκατεστημένο
-if ! command -v trivy &> /dev/null
-then
-    echo "Trivy could not be found. Please install it first: https://aquasecurity.github.io/trivy/latest/getting-started/installation/"
-    exit
+# Local equivalent of the CI security scan: build the image, scan with Trivy,
+# generate a CycloneDX SBOM. Useful for pre-push verification.
+
+if ! command -v trivy &> /dev/null; then
+  echo "ERROR: Trivy not found. Install it from:" >&2
+  echo "  https://aquasecurity.github.io/trivy/latest/getting-started/installation/" >&2
+  exit 1
 fi
 
-IMAGE_NAME="secure-app:local"
+if ! command -v docker &> /dev/null; then
+  echo "ERROR: Docker not found." >&2
+  exit 1
+fi
 
-echo "🔨 Building Docker image..."
-docker build -t $IMAGE_NAME ./app
+IMAGE_NAME="${IMAGE_NAME:-secure-app:local}"
+SBOM_FILE="${SBOM_FILE:-sbom-local.json}"
 
-echo "🔍 Running Vulnerability Scan..."
-trivy image --severity HIGH,CRITICAL $IMAGE_NAME
+echo "==> Building Docker image: ${IMAGE_NAME}"
+docker build -t "${IMAGE_NAME}" ./app
 
-echo "📋 Generating SBOM (CycloneDX)..."
-trivy image --format cyclonedx --output sbom-local.json $IMAGE_NAME
+echo "==> Running vulnerability scan (HIGH,CRITICAL, ignore-unfixed)"
+trivy image \
+  --severity HIGH,CRITICAL \
+  --ignore-unfixed \
+  --exit-code 1 \
+  "${IMAGE_NAME}"
 
-echo "✅ Done! Local SBOM generated as sbom-local.json"
+echo "==> Generating CycloneDX SBOM -> ${SBOM_FILE}"
+trivy image \
+  --format cyclonedx \
+  --output "${SBOM_FILE}" \
+  "${IMAGE_NAME}"
+
+echo "==> Done. SBOM at ${SBOM_FILE}"

@@ -1,44 +1,109 @@
-# Security Design - Secure Software Supply Chain
+# Secure Supply Chain Architecture Design
 
-## Overview
-This project demonstrates a practical software supply chain security pipeline for containerized apps.  
-The pipeline does not only "report" risks; it actively enforces security gates before artifacts are trusted.
+## 1. Overview
+This document outlines the architecture and implementation details of a zero-trust, automated software supply chain security pipeline. The primary objective is to establish verifiable provenance, enforce strict vulnerability gating, and cryptographically guarantee the integrity of artifacts from source code continuously into the production runtime. By fundamentally shifting security left into the early stages of the CI/CD process, we ensure that compromised, non-compliant, or vulnerable container images are prevented from ever being published to the container registry, let alone scheduled on the Kubernetes cluster.
 
-## 1) SBOM (Software Bill of Materials)
-An SBOM is an inventory of what is inside a software artifact (libraries, versions, dependencies).
+## 2. Pipeline Order and Rationale
+The CI/CD pipeline executes security validations strictly prior to artifact publication. The correct order of operations is a critical architectural decision designed to prevent vulnerable images from being temporarily accessible in the registry:
 
-Why we included it:
-- Makes dependency risk visible and auditable.
-- Helps incident response when a new CVE appears (you can quickly check exposure).
-- Improves compliance and transparency for downstream consumers.
+1. **Linting (hadolint, gitleaks):** Analyzes the Dockerfile for anti-patterns and scans the repository for leaked secrets before any build operations commence.
+2. **Local Image Build:** The container image is built locally within the ephemeral runner environment without being pushed to a remote registry.
+3. **Vulnerability Scan (Trivy, JSON + SARIF):** Two Trivy invocations produce a JSON report (artifact) and a SARIF report (uploaded to GitHub Security tab). Both run with `exit-code: 0` so the reports are always preserved, even if later gates fail.
+4. **SBOM Generation:** A CycloneDX Software Bill of Materials is generated from the local image and uploaded with `if: always()`. Producing the SBOM before the enforcement gate guarantees triage data exists for failed builds.
+5. **Enforcement Gate:** A third Trivy invocation runs with `exit-code: 1` on HIGH/CRITICAL findings. If it fails, the pipeline stops here — nothing is pushed to GHCR.
+6. **Registry Authentication & Push:** Only after passing the gate, the pipeline authenticates to the GitHub Container Registry (GHCR) and pushes the validated image.
+7. **Signing & Attestation (Cosign):** The image is signed using keyless OIDC, and the SBOM is attached as an in-toto attestation via `cosign attest --type cyclonedx`.
 
-Implementation in this project:
-- Trivy generates a CycloneDX SBOM (`sbom.json`) for the built image.
-- The SBOM is uploaded as a GitHub Actions artifact for traceability.
+## 3. Defense in Depth Layers
+The architecture implements multiple, overlapping layers of security to mitigate supply chain risks at every phase of the artifact lifecycle:
 
-## 2) Keyless Signing with Cosign
-Keyless signing uses short-lived identity credentials (OIDC) instead of long-lived private keys.
+*   **SHA-Pinned Actions:** Third-party GitHub Actions are pinned by their immutable commit SHAs rather than mutable tags to prevent execution of tampered runner code via upstream tag hijacking.
+*   **Secret Scanning:** `gitleaks` enforces that no credentials, private keys, or sensitive tokens are committed to the repository, mitigating lateral movement risks.
+*   **Dockerfile Linting:** `hadolint` ensures adherence to container best practices, such as preventing the use of the `latest` tag, pinning package versions, and enforcing non-root execution.
+*   **Vulnerability Gating:** `Trivy` acts as a strict enforcement mechanism, generating both JSON reports and SARIF outputs while failing builds that contain unacceptable CVEs.
+*   **Comprehensive SBOMs:** Software Bill of Materials generation using the CycloneDX standard creates a verifiable, structured record of all internal components.
+*   **Cryptographic Attestation:** `cosign` attaches the generated SBOM as an explicit in-toto attestation to the image using OCI referrers, binding metadata to the artifact digest.
+*   **Keyless Signing:** Artifacts are signed dynamically via Sigstore Fulcio, eliminating the need for long-lived, static private keys that can be leaked or compromised.
+*   **Runtime Immutability:** The final container image is configured to run as a non-root user to limit the blast radius of any potential runtime exploit or container breakout.
+*   **Scan-Gated Registry Push:** The push operation is strictly conditional; images failing the vulnerability threshold are never published.
 
-Why this matters:
-- Reduces key management risk (no static signing key to leak or rotate manually).
-- Binds signature identity to the CI workflow execution.
-- Supports provenance checks via Sigstore ecosystem (Fulcio/Rekor).
+## 4. Software Bill of Materials (SBOM)
+A Software Bill of Materials is a comprehensive, machine-readable inventory detailing all components, libraries, and dependencies included in the container image. We utilize the CycloneDX format due to its robust ecosystem support, extensibility, and standardization. 
 
-Implementation in this project:
-- Workflow grants `id-token: write` for OIDC-based identity.
-- Cosign is installed with `sigstore/cosign-installer`.
-- The pushed GHCR image is signed with `cosign sign --yes`.
+In our architecture, we distinguish between an SBOM as a standalone artifact and an SBOM as an attestation. While saving the SBOM as a JSON artifact provides a downloadable record for auditors, attaching it via `cosign attest` is far more powerful:
 
-## 3) Security Enforcement (Not Just Visibility)
-The pipeline enforces controls in CI/CD:
+```bash
+# Example attestation command executed by the pipeline
+cosign attest --predicate sbom.json --type cyclonedx ghcr.io/org/repo/image:tag
+```
 
-1. Build and push container image to GHCR.
-2. Run Trivy scan and produce JSON report artifact for evidence.
-3. Run Trivy enforcement step that fails on HIGH/CRITICAL vulnerabilities.
-4. Generate and upload SBOM.
-5. Sign the image using keyless Cosign.
+This cryptographically binds the SBOM to the image digest as an in-toto attestation via OCI referrers. This proves not just what is in the image, but that this specific, unmodified inventory was generated by our trusted CI pipeline at build time.
 
-Result:
-- Vulnerable builds are blocked.
-- Security artifacts (scan report + SBOM + signature) are preserved.
-- The release process is both inspectable and policy-driven.
+## 5. Keyless Signing with Cosign
+To guarantee artifact integrity and provenance without the operational overhead and risk of managing static cryptographic keys, we utilize Sigstore's keyless signing architecture. 
+
+The GitHub Actions runner authenticates to Fulcio using its ephemeral, short-lived OpenID Connect (OIDC) token to request a signing certificate. The image is signed using this ephemeral identity, and the transaction is recorded in Rekor, Sigstore's immutable, append-only transparency log. Verification relies on checking the transparency log and ensuring the certificate identity matches the expected GitHub repository and workflow:
+
+```bash
+# Example verification enforcing identity
+cosign verify \
+  --certificate-identity-regexp "https://github.com/org/repo/.github/workflows/.*" \
+  --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+  ghcr.io/org/repo/image:tag
+```
+
+## 6. SARIF and GitHub Security Integration
+The Static Analysis Results Interchange Format (SARIF) is an industry-standard format for the output of static analysis tools. During the pipeline execution, Trivy generates a SARIF report alongside its standard JSON output. 
+
+This SARIF file is uploaded directly to GitHub via the `codeql-action/upload-sarif` action. This integration centralizes vulnerability reporting within the GitHub Security tab, providing developers with actionable, contextual alerts and remediation guidance directly within the native repository interface, improving visibility and mean time to remediation (MTTR).
+
+## 7. Threat Model
+
+| Threat | Mitigation | Pipeline Stage |
+| :--- | :--- | :--- |
+| Dependency CVEs | Trivy scan + enforcement gate | Scan / Gate |
+| Vulnerable base image | Trivy scan, version-pinned base image | Build / Scan |
+| Build-time tampering | SHA-pinned actions, ephemeral OIDC, hosted runners | All stages |
+| Secret leakage | gitleaks pre-build scan | Lint stage |
+| Dockerfile anti-patterns | hadolint | Lint stage |
+| Registry compromise / image swap | Cosign keyless signature + Rekor transparency log | Sign / Verify |
+| Identity spoofing | `certificate-identity-regexp` pinned to this repo's workflow | Verify |
+| Unsigned images deployed to cluster | Kyverno `verifyImages` ClusterPolicy (Phase 5) | Runtime |
+
+## 8. Runtime Enforcement (Phase 5 Preview)
+Moving into Phase 5, the zero-trust loop will be closed at the Kubernetes cluster level using Kyverno. A Kyverno `ClusterPolicy` will be deployed utilizing the `verifyImages` rule configured with `failurePolicy: Fail` and strictly enforcing validation (`validationFailureAction: Enforce`). 
+
+The Kubernetes admission controller will reject any pod creation request referencing an image that does not carry a valid Cosign keyless signature. The policy will mandate that the signature's issuer is exactly `https://token.actions.githubusercontent.com` and that the subject string strongly matches the expected GitHub repository workflow identity. 
+
+```yaml
+# Conceptual Kyverno Policy Snippet
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: verify-image-signatures
+spec:
+  validationFailureAction: Enforce
+  failurePolicy: Fail
+  rules:
+    - name: verify-cosign-signatures
+      match:
+        any:
+        - resources:
+            kinds:
+              - Pod
+      verifyImages:
+      - imageReferences:
+        - "ghcr.io/org/repo/*"
+        attestors:
+        - entries:
+          - keyless:
+              subject: "https://github.com/org/repo/.github/workflows/security.yml@refs/heads/main"
+              issuer: "https://token.actions.githubusercontent.com"
+```
+
+## 9. Trade-offs and Known Limitations
+While robust, the current architecture acknowledges the following limitations and areas for future enhancement:
+
+*   **SLSA Compliance:** The current implementation operates within Supply chain Levels for Software Artifacts (SLSA) Level 2 territory. Achieving full SLSA Level 3 provenance requires generating unforgeable build provenance attestations, which is slated for the next iteration using `slsa-github-generator`.
+*   **Base Image Pinning:** The Dockerfile currently utilizes tag-pinned base images. Transitioning to digest-pinned base images (e.g., `@sha256:...`) is a documented future hardening task to eliminate upstream tag mutability risks completely.
+*   **Deployment Environment:** For the purposes of immediate validation and iterative development, the Kyverno runtime enforcement will initially be demonstrated locally on a `kind` (Kubernetes IN Docker) cluster before promotion to a staging or production environment.
