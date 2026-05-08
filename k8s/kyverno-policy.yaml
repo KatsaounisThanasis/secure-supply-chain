@@ -30,6 +30,8 @@ spec:
                 - keyless:
                     issuer: https://token.actions.githubusercontent.com
                     subject: https://github.com/KatsaounisThanasis/secure-supply-chain/.github/workflows/security.yml@refs/heads/main
+                    rekor:
+                      url: https://rekor.sigstore.dev
     - name: restrict-demo-namespace-images
       match:
         any:

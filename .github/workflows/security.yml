@@ -131,10 +131,14 @@ jobs:
       - name: Install Cosign
         uses: sigstore/cosign-installer@cad07c2e89fa2edd6e2d7bab4c1aa38e53f76003 # v4.1.1
 
+      # Use --new-bundle-format=false so signatures land at legacy
+      # `<digest>.sig` / `<digest>.att` tags. This keeps compatibility
+      # with verifiers that have not yet adopted Sigstore bundle v0.3
+      # (e.g. Kyverno <= v1.18 verifyImages keyless).
       - name: Sign image with Cosign (keyless)
         run: |
-          cosign sign --yes "${IMAGE_REF}"
+          cosign sign --yes --new-bundle-format=false "${IMAGE_REF}"
 
       - name: Attest SBOM with Cosign
         run: |
-          cosign attest --yes --predicate sbom.json --type cyclonedx "${IMAGE_REF}"
+          cosign attest --yes --new-bundle-format=false --predicate sbom.json --type cyclonedx "${IMAGE_REF}"
