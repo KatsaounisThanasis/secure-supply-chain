@@ -127,6 +127,37 @@ make kyverno-demo
 ```
 *Note: This command spins up a local `kind` cluster, installs the Kyverno admission controller, applies our `verifyImages` ClusterPolicy (from `k8s/kyverno-policy.yaml`), and then attempts to deploy a signed pod (`k8s/demos/pass-signed.yaml`) which succeeds, followed by an unsigned pod (`k8s/demos/fail-unsigned.yaml`) which is rejected.*
 
+## Live Evidence
+
+Every claim in this README is **verifiable on the live repository** — nothing is fabricated. The pipeline is self-proving on every push.
+
+### Pipeline run (lint → build/scan/sign → runtime enforcement) all green
+
+[![Full pipeline run](docs/screenshots/02-pipeline-run.png)](https://github.com/KatsaounisThanasis/secure-supply-chain/actions/runs/25562234413)
+
+> Three jobs in series. The third — **Runtime Enforcement (Kyverno on kind)** — spins up a real Kubernetes cluster inside the runner, installs Kyverno, deploys a signed pod (admitted), then deploys an unsigned pod (rejected). All asserted automatically.
+
+### Runtime enforcement job: signed admit + unsigned reject, both proven in CI
+
+[![Runtime enforcement job detail](docs/screenshots/05-runtime-enforcement-job.png)](https://github.com/KatsaounisThanasis/secure-supply-chain/actions/runs/25562234413/job/75036844700)
+
+> The two key steps are `Deploy SIGNED pod (expect ADMITTED)` and `Deploy UNSIGNED pod (expect REJECTED)` — they fail the build if either expectation isn't met.
+
+### Signed image on GitHub Container Registry
+
+[![GHCR package](docs/screenshots/03-ghcr-package.png)](https://github.com/KatsaounisThanasis/secure-supply-chain/pkgs/container/secure-app)
+
+> Each commit produces a tagged image plus `<digest>.sig` and `<digest>.att` artifacts (the Cosign signature and CycloneDX SBOM attestation).
+
+### Verbatim text output (signature, annotation, mutated digest, reject error)
+
+See [`docs/DEMO_OUTPUT.md`](docs/DEMO_OUTPUT.md) for the full captured terminal output of the local end-to-end run, including the cosign verification details, the Kyverno `verify-images: pass` annotation, and the admission rejection error message.
+
+### Other live links
+
+- **GitHub Code Scanning** (Trivy SARIF findings): [/security/code-scanning](https://github.com/KatsaounisThanasis/secure-supply-chain/security/code-scanning)
+- **Sigstore Rekor transparency log entry** for `commit 55fe507`: [search.sigstore.dev?logIndex=1473402910](https://search.sigstore.dev/?logIndex=1473402910)
+
 ## Threat Model
 
 | Threat | Mitigation | Stage | Type |
