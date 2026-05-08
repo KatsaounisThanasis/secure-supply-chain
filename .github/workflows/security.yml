@@ -36,9 +36,10 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      id-token: write   # required for Cosign keyless signing
-      packages: write   # required for GHCR push
-      security-events: write
+      id-token: write       # required for Cosign keyless signing
+      packages: write       # required for GHCR push
+      security-events: write # required for SARIF upload
+      actions: read         # required by codeql-action/upload-sarif for run metadata
 
     steps:
       - name: Checkout code
