@@ -144,3 +144,105 @@ jobs:
       - name: Attest SBOM with Cosign
         run: |
           cosign attest --yes --predicate sbom.json --type cyclonedx "${IMAGE_REF}"
+
+  # Phase 5 — Runtime enforcement.
+  # Spin up a kind cluster, install Kyverno, apply the verifyImages
+  # ClusterPolicy, then prove end-to-end that:
+  #   * a pod referencing the just-signed image is ADMITTED,
+  #   * a pod referencing an unsigned image is REJECTED at admission.
+  # This makes runtime enforcement self-proving on every push.
+  runtime-enforcement-test:
+    name: Runtime Enforcement (Kyverno on kind)
+    needs: build-and-scan
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Compute lower-case image ref
+        run: |
+          echo "IMAGE_TAG=${GITHUB_SHA}" >> "${GITHUB_ENV}"
+          echo "IMAGE_REF=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/secure-app:${GITHUB_SHA}" >> "${GITHUB_ENV}"
+
+      - name: Wait for signed image to be queryable on GHCR
+        run: |
+          for i in {1..20}; do
+            if curl -fsSL -H "Accept: application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json" \
+              "https://ghcr.io/v2/${GITHUB_REPOSITORY_OWNER,,}/secure-app/manifests/${GITHUB_SHA}" \
+              -H "Authorization: Bearer $(echo -n '' | base64)" >/dev/null 2>&1 \
+              || curl -fsSL "https://ghcr.io/v2/${GITHUB_REPOSITORY_OWNER,,}/secure-app/manifests/${GITHUB_SHA}" >/dev/null 2>&1; then
+              echo "Image ${IMAGE_REF} is reachable."
+              exit 0
+            fi
+            echo "Attempt $i: image not yet reachable, sleeping 5s..."
+            sleep 5
+          done
+          echo "::warning::Image was not reachable; proceeding anyway."
+
+      - name: Create kind cluster
+        uses: helm/kind-action@a1b0e391336a6ee6713a0583f8c6240d70863de3 # v1.12.0
+        with:
+          cluster_name: secure-supply-chain
+          config: scripts/kind-config.yaml
+
+      - name: Install Helm
+        uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4.3.1
+        with:
+          version: v3.17.0
+
+      - name: Install Kyverno
+        run: |
+          helm repo add kyverno https://kyverno.github.io/kyverno
+          helm repo update
+          helm install kyverno kyverno/kyverno \
+            --namespace kyverno --create-namespace \
+            --version 3.8.0 \
+            --wait --timeout 5m
+          kubectl -n kyverno rollout status deployment/kyverno-admission-controller --timeout=5m
+
+      - name: Apply ClusterPolicy
+        run: |
+          kubectl apply -f k8s/namespace.yaml -f k8s/kyverno-policy.yaml
+          kubectl wait --for=condition=Ready clusterpolicy/verify-secure-app-images --timeout=2m
+          kubectl get clusterpolicy
+
+      - name: Deploy SIGNED pod (expect ADMITTED)
+        run: |
+          set -euo pipefail
+          sed "s/__IMAGE_TAG__/${IMAGE_TAG}/g" k8s/demos/pass-signed.yaml | kubectl apply -f -
+          kubectl -n demo-secure wait --for=condition=Ready pod/secure-app-signed --timeout=3m
+          echo "Pod admitted and Ready."
+          kubectl -n demo-secure get pod secure-app-signed -o wide
+
+      - name: Show Kyverno verification annotation (cryptographic proof)
+        run: |
+          set -euo pipefail
+          IMAGE=$(kubectl -n demo-secure get pod secure-app-signed -o jsonpath='{.spec.containers[0].image}')
+          ANNOT=$(kubectl -n demo-secure get pod secure-app-signed -o jsonpath='{.metadata.annotations.kyverno\.io/verify-images}')
+          echo "Pod image after admission (Kyverno mutated tag to digest):"
+          echo "  $IMAGE"
+          echo
+          echo "Kyverno verifyImages annotation:"
+          echo "$ANNOT" | python3 -m json.tool
+
+      - name: Deploy UNSIGNED pod (expect REJECTED)
+        run: |
+          set +e
+          OUT=$(kubectl apply -f k8s/demos/fail-unsigned.yaml 2>&1)
+          RC=$?
+          set -e
+          echo "$OUT"
+          if [ $RC -ne 0 ] && echo "$OUT" | grep -q "denied the request"; then
+            echo "::notice::Unsigned image was rejected at admission, as expected."
+            exit 0
+          fi
+          echo "::error::Unsigned image was NOT rejected. Admission control is broken."
+          exit 1
+
+      - name: Cluster events on failure
+        if: failure()
+        run: |
+          kubectl get events -A --sort-by=.lastTimestamp | tail -50
+          kubectl -n kyverno logs deploy/kyverno-admission-controller --tail=100 || true
