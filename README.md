@@ -21,8 +21,6 @@
   </p>
 </div>
 
-![Architecture Diagram](docs/architecture.svg)
-
 This repository is a working reference implementation of a production-grade secure software supply chain. It provides automated defense-in-depth against dependency vulnerabilities, secret leakage, and build-time tampering, culminating in cryptographic verification via Kubernetes admission control to ensure only verified, trusted artifacts run in your cluster. Every stage — from lint to admission — is self-proving on each push.
 
 <details>
@@ -46,31 +44,7 @@ This repository is a working reference implementation of a production-grade secu
 
 ## Architecture
 
-```mermaid
-graph TD
-    classDef lint fill:#1E88E5,stroke:#fff,stroke-width:2px,color:#fff;
-    classDef scan fill:#F4511E,stroke:#fff,stroke-width:2px,color:#fff;
-    classDef gate fill:#E53935,stroke:#fff,stroke-width:2px,color:#fff;
-    classDef sign fill:#43A047,stroke:#fff,stroke-width:2px,color:#fff;
-    classDef runtime fill:#8E24AA,stroke:#fff,stroke-width:2px,color:#fff;
-
-    A[Code Commit] --> B[Lint: Hadolint & Gitleaks]:::lint
-    B --> C[Build Image Locally]
-    C --> D[Trivy Vulnerability Scan]:::scan
-    D -. SARIF Output .-> E[GitHub Security Tab]
-    D --> H[Generate CycloneDX SBOM]
-    H --> F{Enforcement Gate}:::gate
-    F -- HIGH/CRITICAL CVEs --> G[Fail Pipeline]:::gate
-    F -- Pass --> I[Push to GHCR]
-    I --> J[Keyless Sign via Cosign & OIDC]:::sign
-    J --> K[Attest SBOM via Cosign]:::sign
-    K -. Transparency Log .-> L[(Rekor)]
-    K --> M[Image + Signed SBOM]
-    M --> N[Kubernetes Cluster]
-    N --> O{Kyverno Admission Control}:::runtime
-    O -- Signature Verified --> P[Pod Admitted]:::runtime
-    O -- Unsigned/Invalid --> Q[Pod Rejected]:::runtime
-```
+![Architecture Diagram](docs/architecture.svg)
 
 ## What This Demonstrates
 
