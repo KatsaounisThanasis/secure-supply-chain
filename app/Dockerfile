@@ -1,7 +1,9 @@
 # Build Stage
 # Pinned to a Go version that includes fixes for all stdlib CVEs flagged by Trivy
-# (CVE-2025-68121, CVE-2026-32280/81/83, CVE-2026-25679, ...). Bump as needed.
-FROM golang:1.26.2-alpine AS builder
+# (latest batch: 16 HIGH incl. CVE-2026-27145 crypto/x509, fixed in 1.26.4).
+# When the CI gate goes red on stdlib CVEs, bumping this is the fix - the gate
+# blocking a vulnerable toolchain is the pipeline working as designed.
+FROM golang:1.26.4-alpine AS builder
 
 WORKDIR /src
 COPY go.mod ./
