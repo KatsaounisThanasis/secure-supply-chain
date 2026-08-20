@@ -1,9 +1,9 @@
 # Build Stage
 # Pinned to a Go version that includes fixes for all stdlib CVEs flagged by Trivy
-# (latest batch: 16 HIGH incl. CVE-2026-27145 crypto/x509, fixed in 1.26.4).
+# (latest batch: CVE-2026-33818 encoding/asn1, CVE-2026-39821/22, fixed in 1.26.6).
 # When the CI gate goes red on stdlib CVEs, bumping this is the fix - the gate
 # blocking a vulnerable toolchain is the pipeline working as designed.
-FROM golang:1.26.4-alpine AS builder
+FROM golang:1.26.6-alpine AS builder
 
 WORKDIR /src
 COPY go.mod ./
@@ -14,7 +14,7 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/main .
 
 # Final Stage (Secure & Small)
-FROM alpine:3.20
+FROM alpine:3.22
 
 # Run as non-root for least privilege
 RUN addgroup -S app && adduser -S -G app app
